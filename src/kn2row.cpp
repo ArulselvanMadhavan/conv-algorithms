@@ -19,14 +19,14 @@ float gen_rand() {
 }
 
 void fill_matrix(std::vector<float> &in, bool use_zero) {
-  for (int i = 0; i < in.size(); i++) {
+  for (unsigned long i = 0; i < in.size(); i++) {
     in[i] = use_zero ? 0.0 : gen_rand();
   }
 }
 
 unsigned int numel(at::IntArrayRef in_shape) {
   unsigned int size = 1;
-  for (int i = 0; i < in_shape.size(); i++) {
+  for (unsigned long i = 0; i < in_shape.size(); i++) {
     size = size * in_shape[i];
   }
   return size;
@@ -109,10 +109,10 @@ int main(int argc, char *argv[]) {
 
   at::IntArrayRef pad_ref = at::ArrayRef(padding.begin(), padding.end());
   at::IntArrayRef str_ref = at::ArrayRef(stride.begin(), stride.end());
-  at::IntArrayRef dil_ref = at::ArrayRef(stride.begin(), stride.end());
+  at::IntArrayRef dil_ref = at::ArrayRef(dilation.begin(), dilation.end());
   auto o_ref = at::convolution(in_at, k_at, c10::nullopt, str_ref, pad_ref,
                                dil_ref, false, {0, 0}, 1);
   bool result =
       at::isclose(o_at, o_ref, 1e-3, 1e-3, true).all().item<uint8_t>();
-  std::cout << "IsMatch:" << result << "\n";
+  return result ? 0 : -1;
 }

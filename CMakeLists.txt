@@ -8,9 +8,16 @@ project(conv_algorithms
     VERSION 0.0.1
     DESCRIPTION "Try different conv algorithms"
     HOMEPAGE_URL "https://github.com/ArulselvanMadhavan/conv-algorithms"
-    LANGUAGES CXX
 )
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# LLVM
+find_package(LLVM REQUIRED HINTS "${LLVM_CMAKE_PATH}")
+list(APPEND CMAKE_MODULE_PATH ${LLVM_DIR})
+include(AddLLVM)
+include(HandleLLVMOptions)
+include_directories("${LLVM_BINARY_DIR}/include" "${LLVM_INCLUDE_DIR}")
+link_directories("${LLVM_LIBRARY_DIR}")
 
 # Libtorch
 set(PYTORCH_VERSION "1.13.0")
