@@ -68,7 +68,7 @@ void naive_conv2d(std::vector<float> &in, std::vector<float> &k,
               }
             }
           }
-          int out_idx = (o * H * W) + (h * H) + w;
+          int out_idx = (n * M * H * W) + (o * H * W) + (h * H) + w;
           out[out_idx] = sum;
         }
       }
@@ -149,5 +149,9 @@ int main(int argc, char *argv[]) {
                                dil_ref, false, {0, 0}, 1);
   bool result =
       at::isclose(o_at, o_ref, 1e-3, 1e-3, true).all().item<uint8_t>();
+  if (!result) {
+    at::print(o_at);
+    at::print(o_ref);
+  }
   return result ? 0 : -1;
 }
