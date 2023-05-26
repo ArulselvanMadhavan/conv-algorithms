@@ -81,11 +81,14 @@ enum ConvAlg { vanilla };
 static std::map<std::string, ConvAlg> const table = {
     {"vanilla", ConvAlg::vanilla}};
 static const std::string convAlgParam("conv-alg");
-
 int main(int argc, char *argv[]) {
   argh::parser cmdl;
   cmdl.add_param(convAlgParam);
-  cmdl.parse(argc, argv);
+  cmdl.add_param({"-N", "--batch-size", "-H", "--height", "-W", "--width", "-C",
+                  "--channels", "-M", "--out-channels", "-K", "--kernel-size"});
+  cmdl.parse(argc, argv, argh::parser::PREFER_PARAM_FOR_UNREG_OPTION);
+
+  // Handle conv alg
   auto conv_alg = cmdl(convAlgParam).str();
   auto it = table.find(conv_alg);
   ConvAlg convAlg;
@@ -96,17 +99,19 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
+  // Handle int params
+  int N = std::atoi(cmdl("N").str().c_str());
+  int H = std::atoi(cmdl("H").str().c_str());
+  int W = std::atoi(cmdl("W").str().c_str());
+  int C = std::atoi(cmdl("C").str().c_str());
+  int M = std::atoi(cmdl("M").str().c_str());
+  int K = std::atoi(cmdl("K").str().c_str());
+
+  // Seed
   auto seed = static_cast<unsigned>(time(0));
   srand(seed);
   std::cout << "Running kn2row with seed:" << seed << "\n";
 
-  int N = 1;
-  int H = 3;
-  int W = 3;
-  int C = 1;
-
-  int M = 1;
-  int K = 3;
   std::array<long int, 2> padding{1, 1}, stride{1, 1}, dilation{1, 1};
   std::array<long int, 4> in_shape{N, C, H, W};
   std::array<long int, 4> k_shape{M, C, K, K};
