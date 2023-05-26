@@ -19,6 +19,14 @@ include(HandleLLVMOptions)
 include_directories("${LLVM_BINARY_DIR}/include" "${LLVM_INCLUDE_DIR}")
 link_directories("${LLVM_LIBRARY_DIR}")
 
+# CLI
+include(FetchContent)
+FetchContent_Declare(
+  argh
+  GIT_REPOSITORY https://github.com/adishavit/argh
+)
+FetchContent_MakeAvailable(argh)
+
 # Libtorch
 set(PYTORCH_VERSION "1.13.0")
 find_package(Torch ${PYTORCH_VERSION} EXACT QUIET PATHS
@@ -34,9 +42,9 @@ endif()
 set(EXECUTABLE_NAME kn2row)
 add_executable(${EXECUTABLE_NAME})
 target_sources(${EXECUTABLE_NAME} PRIVATE src/kn2row.cpp)
-target_link_libraries(${EXECUTABLE_NAME} ${TORCH_LIBRARIES})
+target_link_libraries(${EXECUTABLE_NAME} ${TORCH_LIBRARIES} argh)
 set_target_properties(${EXECUTABLE_NAME} PROPERTIES
-    CXX_STANDARD 17
+    CXX_STANDARD 14
     CXX_STANDARD_REQUIRED YES)
 
     

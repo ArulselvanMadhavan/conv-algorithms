@@ -1,3 +1,4 @@
+#include "argh.h"
 #include <ATen/ATen.h>
 #include <ATen/core/Formatting.h>
 #include <ATen/ops/convolution.h>
@@ -11,8 +12,11 @@
 #include <ctime>
 #include <iostream>
 #include <optional>
+#include <string>
 #include <torch/torch.h>
 #include <vector>
+
+using namespace argh;
 
 float gen_rand() {
   return static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
@@ -72,7 +76,26 @@ void naive_conv2d(std::vector<float> &in, std::vector<float> &k,
   }
 }
 
+enum ConvAlg { vanilla };
+
+static std::map<std::string, ConvAlg> const table = {
+    {"vanilla", ConvAlg::vanilla}};
+static const std::string convAlgParam("conv-alg");
+
 int main(int argc, char *argv[]) {
+  argh::parser cmdl;
+  cmdl.add_param(convAlgParam);
+  cmdl.parse(argc, argv);
+  auto conv_alg = cmdl(convAlgParam).str();
+  auto it = table.find(conv_alg);
+  ConvAlg convAlg;
+  if (it != table.end()) {
+    convAlg = it->second;
+  } else {
+    std::cout << "Unsupported conv alg:" << conv_alg << "\n";
+    return -1;
+  }
+
   auto seed = static_cast<unsigned>(time(0));
   srand(seed);
   std::cout << "Running kn2row with seed:" << seed << "\n";
@@ -100,16 +123,23 @@ int main(int argc, char *argv[]) {
   fill_matrix(inputs, false);
   fill_matrix(kernels, false);
   fill_matrix(outputs, true);
-  naive_conv2d(inputs, kernels, outputs, in_shape, k_shape, o_shape);
+
+  switch (convAlg) {
+  case ConvAlg::vanilla:
+    naive_conv2d(inputs, kernels, outputs, in_shape, k_shape, o_shape);
+    break;
+  };
 
   // Torch ref
   auto in_at = at::from_blob(inputs.data(), in_shape);
   auto k_at = at::from_blob(kernels.data(), k_shape);
   auto o_at = at::from_blob(outputs.data(), o_shape);
 
-  at::IntArrayRef pad_ref = at::ArrayRef(padding.begin(), padding.end());
-  at::IntArrayRef str_ref = at::ArrayRef(stride.begin(), stride.end());
-  at::IntArrayRef dil_ref = at::ArrayRef(dilation.begin(), dilation.end());
+  at::IntArrayRef pad_ref =
+      at::ArrayRef<int64_t>(padding.begin(), padding.end());
+  at::IntArrayRef str_ref = at::ArrayRef<int64_t>(stride.begin(), stride.end());
+  at::IntArrayRef dil_ref =
+      at::ArrayRef<int64_t>(dilation.begin(), dilation.end());
   auto o_ref = at::convolution(in_at, k_at, c10::nullopt, str_ref, pad_ref,
                                dil_ref, false, {0, 0}, 1);
   bool result =
