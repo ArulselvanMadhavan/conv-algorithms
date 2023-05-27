@@ -4,11 +4,14 @@
 #include <ATen/ops/convolution.h>
 #include <ATen/ops/from_blob.h>
 #include <ATen/ops/rand.h>
+#include <algorithm>
 #include <c10/core/ScalarType.h>
 #include <c10/util/ArrayRef.h>
 #include <c10/util/SmallVector.h>
+#include <cblas.h>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <iostream>
 #include <optional>
@@ -36,9 +39,9 @@ unsigned int numel(at::IntArrayRef in_shape) {
   return size;
 }
 
-void naive_conv2d(std::vector<float> &in, std::vector<float> &k,
-                  std::vector<float> &out, at::IntArrayRef in_shape,
-                  at::IntArrayRef k_shape, at::IntArrayRef o_shape) {
+void conv2d(std::vector<float> &in, std::vector<float> &k,
+            std::vector<float> &out, at::IntArrayRef in_shape,
+            at::IntArrayRef k_shape, at::IntArrayRef o_shape) {
   int N = in_shape[0];
   int C = in_shape[1];
   int H = in_shape[2];
@@ -56,10 +59,8 @@ void naive_conv2d(std::vector<float> &in, std::vector<float> &k,
                 int k_idx = (o * C * K * K) + (c * K * K) + (x * K) + y;
                 int h_idx = h + (x - K / 2);
                 int w_idx = w + (y - K / 2);
-                if ((h_idx >= H) || (h_idx < 0)) {
-                  continue;
-                }
-                if ((w_idx >= W) || (w_idx < 0)) {
+                if ((h_idx >= H) || (h_idx < 0) || (w_idx >= W) ||
+                    (w_idx < 0)) {
                   continue;
                 }
                 int in_idx =
@@ -76,11 +77,88 @@ void naive_conv2d(std::vector<float> &in, std::vector<float> &k,
   }
 }
 
-enum ConvAlg { vanilla };
+void swap(int src_idx, int dst_idx, size_t size, float *out_begin,
+          float *temp) {
+  std::memcpy(temp, out_begin + src_idx, size);
+  // for (int i = 0; i < size; i++) {
+  //   std::cout << "temp:" << temp[i] << "\n";
+  // }
+  std::memcpy(out_begin + src_idx, out_begin + dst_idx, size);
+  std::memcpy(out_begin + dst_idx, temp, size);
+}
+void im2col_scan(std::vector<float> &in, std::vector<float> &k,
+                 std::vector<float> &out, at::IntArrayRef in_shape,
+                 at::IntArrayRef k_shape, at::IntArrayRef o_shape) {
+  int N = in_shape[0];
+  int C = in_shape[1];
+  int H = in_shape[2];
+  int W = in_shape[3];
+  int M = k_shape[0];
+  int K = k_shape[2];
+  std::array<long int, 6> p_shape = {C, K, K, N, H, W};
+  at::IntArrayRef p_ref = at::ArrayRef<int64_t>(p_shape.begin(), p_shape.end());
+  std::vector<float> patches(numel(p_ref));
+  fill_matrix(patches, true);
+  for (int n = 0; n < N; n++) {
+    for (int c = 0; c < C; c++) {
+      for (int kh = 0; kh < K; kh++) {
+        for (int kw = 0; kw < K; kw++) {
+          for (int h = 0; h < H; h++) {
+            for (int w = 0; w < W; w++) {
+              int pch_idx = (c * K * K * N * H * W) + (kh * K * N * H * W) +
+                            (kw * N * H * W) + (n * H * W) + (h * W) + w;
+              int h_idx = h + (kh - K / 2);
+              int w_idx = w + (kw - K / 2);
+              if ((h_idx >= H) || (h_idx < 0) || (w_idx >= W) || (w_idx < 0)) {
+                continue;
+              }
+              int in_idx = (n * C * H * W) + (c * H * W) + (h_idx * W) + w_idx;
+              patches[pch_idx] = in[in_idx];
+            }
+          }
+        }
+      }
+    }
+  }
+  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N * H * W,
+              C * K * K, 1.0, k.data(), C * K * K, patches.data(), N * H * W,
+              1., out.data(), N * H * W);
+
+  // Permute M N H W -> N M H W
+  int X = std::min(M, N);
+  int hw = H * W;
+  std::vector<float> temp(hw);
+  for (int m = 0; m < M; m++) {
+    for (int n = 0; n < N; n++) {
+      int src_idx = (m * N) + n;
+      int dst_idx = (n * M) + m;
+      if (src_idx == dst_idx) {
+        continue;
+      }
+      if ((m < X) && (n < X)) {
+        if (m < n) { // Treat upper diag as src and lower diag as dest
+          std::cout << src_idx << "|" << dst_idx << "\n";
+          swap(src_idx * hw, dst_idx * hw, sizeof(float) * hw, out.data(),
+               temp.data());
+        }
+      } else {
+        std::cout << "Non-squ:" << src_idx << "|" << dst_idx << "\n";
+        swap(src_idx * hw, dst_idx * hw, sizeof(float) * hw, out.data(),
+             temp.data());
+      }
+    }
+  }
+  // auto o_at = at::from_blob(out.data(), o_shape);
+  // o_at = o_at.permute({1, 0, 2, 3});
+  // at::print(o_at);
+}
+
+enum ConvAlg { vanilla, im2col };
 
 static std::map<std::string, ConvAlg> const table = {
-    {"vanilla", ConvAlg::vanilla}};
+    {"vanilla", ConvAlg::vanilla}, {"im2col", ConvAlg::im2col}};
 static const std::string convAlgParam("conv-alg");
+
 int main(int argc, char *argv[]) {
   argh::parser cmdl;
   cmdl.add_param(convAlgParam);
@@ -109,6 +187,7 @@ int main(int argc, char *argv[]) {
 
   // Seed
   auto seed = static_cast<unsigned>(time(0));
+  seed = 41;
   srand(seed);
   std::cout << "Running kn2row with seed:" << seed << "\n";
 
@@ -131,7 +210,10 @@ int main(int argc, char *argv[]) {
 
   switch (convAlg) {
   case ConvAlg::vanilla:
-    naive_conv2d(inputs, kernels, outputs, in_shape, k_shape, o_shape);
+    conv2d(inputs, kernels, outputs, in_shape, k_shape, o_shape);
+    break;
+  case ConvAlg::im2col:
+    im2col_scan(inputs, kernels, outputs, in_shape, k_shape, o_shape);
     break;
   };
 

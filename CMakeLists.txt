@@ -11,6 +11,9 @@ project(conv_algorithms
 )
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# BLAS
+find_package(BLAS REQUIRED)
+
 # LLVM
 find_package(LLVM REQUIRED HINTS "${LLVM_CMAKE_PATH}")
 list(APPEND CMAKE_MODULE_PATH ${LLVM_DIR})
@@ -42,7 +45,7 @@ endif()
 set(EXECUTABLE_NAME kn2row)
 add_executable(${EXECUTABLE_NAME})
 target_sources(${EXECUTABLE_NAME} PRIVATE src/kn2row.cpp)
-target_link_libraries(${EXECUTABLE_NAME} ${TORCH_LIBRARIES} argh)
+target_link_libraries(${EXECUTABLE_NAME} ${TORCH_LIBRARIES} argh ${BLAS_LIBRARIES})
 set_target_properties(${EXECUTABLE_NAME} PROPERTIES
     CXX_STANDARD 14
     CXX_STANDARD_REQUIRED YES)
