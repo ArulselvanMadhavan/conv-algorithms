@@ -5,11 +5,13 @@
 #include <ATen/ops/from_blob.h>
 #include <ATen/ops/rand.h>
 #include <algorithm>
+#include <bits/stdc++.h>
 #include <c10/core/ScalarType.h>
 #include <c10/util/ArrayRef.h>
 #include <c10/util/SmallVector.h>
 #include <cblas.h>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -77,15 +79,14 @@ void conv2d(std::vector<float> &in, std::vector<float> &k,
   }
 }
 
-void swap(int src_idx, int dst_idx, size_t size, float *out_begin,
-          float *temp) {
-  std::memcpy(temp, out_begin + src_idx, size);
-  // for (int i = 0; i < size; i++) {
-  //   std::cout << "temp:" << temp[i] << "\n";
-  // }
-  std::memcpy(out_begin + src_idx, out_begin + dst_idx, size);
-  std::memcpy(out_begin + dst_idx, temp, size);
+void swap(float *src, float *dest, unsigned int n) {
+  std::vector<float> temp(n);
+  size_t bytesToCopy = sizeof(float) * n;
+  std::memcpy(temp.data(), dest, bytesToCopy);
+  std::memcpy(dest, src, bytesToCopy);
+  std::memcpy(src, temp.data(), bytesToCopy);
 }
+
 void im2col_scan(std::vector<float> &in, std::vector<float> &k,
                  std::vector<float> &out, at::IntArrayRef in_shape,
                  at::IntArrayRef k_shape, at::IntArrayRef o_shape) {
@@ -125,32 +126,28 @@ void im2col_scan(std::vector<float> &in, std::vector<float> &k,
               1., out.data(), N * H * W);
 
   // Permute M N H W -> N M H W
-  int X = std::min(M, N);
+  const int mn = M * N;
+  std::vector<bool> b(mn, 0);
   int hw = H * W;
-  std::vector<float> temp(hw);
-  for (int m = 0; m < M; m++) {
-    for (int n = 0; n < N; n++) {
-      int src_idx = (m * N) + n;
-      int dst_idx = (n * M) + m;
-      if (src_idx == dst_idx) {
-        continue;
-      }
-      if ((m < X) && (n < X)) {
-        if (m < n) { // Treat upper diag as src and lower diag as dest
-          std::cout << src_idx << "|" << dst_idx << "\n";
-          swap(src_idx * hw, dst_idx * hw, sizeof(float) * hw, out.data(),
-               temp.data());
-        }
-      } else {
-        std::cout << "Non-squ:" << src_idx << "|" << dst_idx << "\n";
-        swap(src_idx * hw, dst_idx * hw, sizeof(float) * hw, out.data(),
-             temp.data());
-      }
+  b[0] = b[mn - 1] = 1;
+  int i = 1, cycleBegin = 1, next = 1;
+  size_t bytesToCopy = sizeof(float) * hw;
+  std::vector<float> temp(hw, 0.);
+  float *out_begin = out.data();
+  while (i < (mn - 1)) {
+    cycleBegin = i;
+    float *cycle_src = out_begin + (i * hw);
+    std::memcpy(temp.data(), cycle_src, bytesToCopy);
+    do {
+      next = (i * M) % (mn - 1);
+      float *out_dst = out_begin + (next * hw);
+      swap(out_dst, temp.data(), hw);
+      b[next] = 1;
+      i = next;
+    } while (i != cycleBegin);
+    for (i = 1; i < (mn - 1) && b[i]; i++) {
     }
   }
-  // auto o_at = at::from_blob(out.data(), o_shape);
-  // o_at = o_at.permute({1, 0, 2, 3});
-  // at::print(o_at);
 }
 
 enum ConvAlg { vanilla, im2col };
