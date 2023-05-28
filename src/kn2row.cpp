@@ -87,6 +87,33 @@ void swap(float *src, float *dest, unsigned int n) {
   std::memcpy(src, temp.data(), bytesToCopy);
 }
 
+void transposeInplace(const int M, const int N, const int H, const int W,
+                      std::vector<float> &out) {
+  // Permute M N H W -> N M H W
+  const int mn = M * N;
+  std::vector<bool> b(mn, 0);
+  int hw = H * W;
+  b[0] = b[mn - 1] = 1;
+  int i = 1, cycleBegin = 1, next = 1;
+  size_t bytesToCopy = sizeof(float) * hw;
+  std::vector<float> temp(hw, 0.);
+  float *out_begin = out.data();
+  while (i < (mn - 1)) {
+    cycleBegin = i;
+    float *cycle_src = out_begin + (i * hw);
+    std::memcpy(temp.data(), cycle_src, bytesToCopy);
+    do {
+      next = (i * M) % (mn - 1);
+      float *out_dst = out_begin + (next * hw);
+      swap(out_dst, temp.data(), hw);
+      b[next] = 1;
+      i = next;
+    } while (i != cycleBegin);
+    for (i = 1; i < (mn - 1) && b[i]; i++) {
+    }
+  }
+}
+
 void im2col_scan(std::vector<float> &in, std::vector<float> &k,
                  std::vector<float> &out, at::IntArrayRef in_shape,
                  at::IntArrayRef k_shape, at::IntArrayRef o_shape) {
@@ -124,30 +151,7 @@ void im2col_scan(std::vector<float> &in, std::vector<float> &k,
   cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N * H * W,
               C * K * K, 1.0, k.data(), C * K * K, patches.data(), N * H * W,
               1., out.data(), N * H * W);
-
-  // Permute M N H W -> N M H W
-  const int mn = M * N;
-  std::vector<bool> b(mn, 0);
-  int hw = H * W;
-  b[0] = b[mn - 1] = 1;
-  int i = 1, cycleBegin = 1, next = 1;
-  size_t bytesToCopy = sizeof(float) * hw;
-  std::vector<float> temp(hw, 0.);
-  float *out_begin = out.data();
-  while (i < (mn - 1)) {
-    cycleBegin = i;
-    float *cycle_src = out_begin + (i * hw);
-    std::memcpy(temp.data(), cycle_src, bytesToCopy);
-    do {
-      next = (i * M) % (mn - 1);
-      float *out_dst = out_begin + (next * hw);
-      swap(out_dst, temp.data(), hw);
-      b[next] = 1;
-      i = next;
-    } while (i != cycleBegin);
-    for (i = 1; i < (mn - 1) && b[i]; i++) {
-    }
-  }
+  transposeInplace(M, N, H, W, out);
 }
 
 enum ConvAlg { vanilla, im2col };
