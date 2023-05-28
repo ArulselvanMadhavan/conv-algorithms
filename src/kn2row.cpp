@@ -28,9 +28,10 @@ float gen_rand() {
   return static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
 }
 
-void fill_matrix(std::vector<float> &in, bool use_zero) {
+void fill_matrix(std::vector<float> &in, bool use_rand,
+                 float default_val = 0.0) {
   for (unsigned long i = 0; i < in.size(); i++) {
-    in[i] = use_zero ? 0.0 : gen_rand();
+    in[i] = use_rand ? gen_rand() : default_val;
   }
 }
 
@@ -127,7 +128,7 @@ void im2col_scan(std::vector<float> &in, std::vector<float> &k,
   std::array<long int, 6> p_shape = {C, K, K, N, H, W};
   at::IntArrayRef p_ref = at::ArrayRef<int64_t>(p_shape.begin(), p_shape.end());
   std::vector<float> patches(numel(p_ref));
-  fill_matrix(patches, true);
+  fill_matrix(patches, false);
   for (int n = 0; n < N; n++) {
     for (int c = 0; c < C; c++) {
       for (int kh = 0; kh < K; kh++) {
@@ -155,19 +156,61 @@ void im2col_scan(std::vector<float> &in, std::vector<float> &k,
   transposeInplace(M, N, H, W, out);
 }
 
+void shiftadd2d(int row_off, int col_off, int H, int W, float *src,
+                float *dest) {
+  // row_offset is inserting zeros of col_width either beginning or end
+  // col_offset if inserting zeros in each row in the beginning or end
+  for (int h = 0; h < H; h++) {
+    for (int w = 0; w < W; w++) {
+      float *src_p = src + (h * W) + w;
+      int rh = h - row_off;
+      int rw = w - col_off;
+      if ((rh < 0) || (rh >= H) || (rw < 0) || (rw >= W)) {
+        continue;
+      }
+      float *dst_p = dest + (rh * W) + rw;
+      *dst_p = *src_p + *dst_p;
+    }
+  }
+}
+
+void shiftadd(float *output, float *buffer, int row_off, int col_off, int H,
+              int W, int M) {
+  for (int m = 0; m < M; m++) {
+    int ptr_off = (m * H * W);
+    float *src = buffer + ptr_off;
+    float *dest = output + ptr_off;
+    shiftadd2d(row_off, col_off, H, W, src, dest);
+  }
+}
+
 void kn2row_as(std::vector<float> &in, std::vector<float> &k,
                std::vector<float> &out, at::IntArrayRef in_shape,
                at::IntArrayRef k_shape, at::IntArrayRef o_shape) {
-  unsigned int N = in_shape[0];
-  unsigned int C = in_shape[1];
-  unsigned int H = in_shape[2];
-  unsigned int W = in_shape[3];
-  unsigned int M = k_shape[0];
-  unsigned int K = k_shape[2];
+  int N = in_shape[0];
+  int C = in_shape[1];
+  int H = in_shape[2];
+  int W = in_shape[3];
+  int M = k_shape[0];
+  int K = k_shape[2];
   // MCKK -> KKMC
   transposeInplace(M * C, K * K, 1, 1, k);
-  // NCHW -> CNHW
-  transposeInplace(N, C, H, W, in);
+
+  std::vector<float> buffer(M * H * W, 0.);
+  for (int n = 0; n < N; n++) {
+    float *in_data = in.data() + (n * C * H * W);
+    float *out_data = out.data() + (n * M * H * W);
+    for (int kh = 0; kh < K; kh++) {
+      for (int kw = 0; kw < K; kw++) {
+        float *k_begin = k.data() + (kh * K * M * C) + (kw + M * C);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, H * W, C, 1.,
+                    k_begin, C, in_data, H * W, 0., buffer.data(), H * W);
+        int row_off = K / 2 - kh;
+        int col_off = K / 2 - kw;
+        shiftadd(out_data, buffer.data(), row_off, col_off, H, W, M);
+      }
+    }
+  }
 }
 
 enum ConvAlg { vanilla, im2col, kn2row };
@@ -223,9 +266,9 @@ int main(int argc, char *argv[]) {
   std::vector<float> kernels(k_numel);
   std::vector<float> outputs(o_numel);
 
-  fill_matrix(inputs, false);
-  fill_matrix(kernels, false);
-  fill_matrix(outputs, true);
+  fill_matrix(inputs, true);
+  fill_matrix(kernels, false, 1.0);
+  fill_matrix(outputs, false);
 
   switch (convAlg) {
   case ConvAlg::vanilla:
@@ -252,7 +295,7 @@ int main(int argc, char *argv[]) {
                                dil_ref, false, {0, 0}, 1);
   bool result =
       at::isclose(o_at, o_ref, 1e-3, 1e-3, true).all().item<uint8_t>();
-  if (result) {
+  if (!result) {
     at::print(o_at);
     at::print(o_ref);
   }
