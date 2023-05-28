@@ -193,8 +193,6 @@ void kn2row_as(std::vector<float> &in, std::vector<float> &k,
   int W = in_shape[3];
   int M = k_shape[0];
   int K = k_shape[2];
-  // MCKK -> KKMC
-  transposeInplace(M * C, K * K, 1, 1, k);
 
   std::vector<float> buffer(M * H * W, 0.);
   for (int n = 0; n < N; n++) {
@@ -203,8 +201,8 @@ void kn2row_as(std::vector<float> &in, std::vector<float> &k,
     for (int kh = 0; kh < K; kh++) {
       for (int kw = 0; kw < K; kw++) {
         float *k_begin = k.data() + (kh * K * M * C) + (kw + M * C);
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, H * W, C, 1.,
-                    k_begin, C, in_data, H * W, 0., buffer.data(), H * W);
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, H * W, C, 1.,
+                    k_begin, K * K, in_data, H * W, 0., buffer.data(), H * W);
         int row_off = K / 2 - kh;
         int col_off = K / 2 - kw;
         shiftadd(out_data, buffer.data(), row_off, col_off, H, W, M);
