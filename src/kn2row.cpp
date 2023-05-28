@@ -3,6 +3,7 @@
 #include <ATen/core/Formatting.h>
 #include <ATen/ops/convolution.h>
 #include <ATen/ops/from_blob.h>
+#include <ATen/ops/permute.h>
 #include <ATen/ops/rand.h>
 #include <algorithm>
 #include <bits/stdc++.h>
@@ -154,10 +155,27 @@ void im2col_scan(std::vector<float> &in, std::vector<float> &k,
   transposeInplace(M, N, H, W, out);
 }
 
-enum ConvAlg { vanilla, im2col };
+void kn2row_as(std::vector<float> &in, std::vector<float> &k,
+               std::vector<float> &out, at::IntArrayRef in_shape,
+               at::IntArrayRef k_shape, at::IntArrayRef o_shape) {
+  unsigned int N = in_shape[0];
+  unsigned int C = in_shape[1];
+  unsigned int H = in_shape[2];
+  unsigned int W = in_shape[3];
+  unsigned int M = k_shape[0];
+  unsigned int K = k_shape[2];
+  // MCKK -> KKMC
+  transposeInplace(M * C, K * K, 1, 1, k);
+  // NCHW -> CNHW
+  transposeInplace(N, C, H, W, in);
+}
+
+enum ConvAlg { vanilla, im2col, kn2row };
 
 static std::map<std::string, ConvAlg> const table = {
-    {"vanilla", ConvAlg::vanilla}, {"im2col", ConvAlg::im2col}};
+    {"vanilla", ConvAlg::vanilla},
+    {"im2col", ConvAlg::im2col},
+    {"kn2row", ConvAlg::kn2row}};
 static const std::string convAlgParam("conv-alg");
 
 int main(int argc, char *argv[]) {
@@ -216,6 +234,8 @@ int main(int argc, char *argv[]) {
   case ConvAlg::im2col:
     im2col_scan(inputs, kernels, outputs, in_shape, k_shape, o_shape);
     break;
+  case ConvAlg::kn2row:
+    kn2row_as(inputs, kernels, outputs, in_shape, k_shape, o_shape);
   };
 
   // Torch ref
@@ -232,7 +252,7 @@ int main(int argc, char *argv[]) {
                                dil_ref, false, {0, 0}, 1);
   bool result =
       at::isclose(o_at, o_ref, 1e-3, 1e-3, true).all().item<uint8_t>();
-  if (!result) {
+  if (result) {
     at::print(o_at);
     at::print(o_ref);
   }
