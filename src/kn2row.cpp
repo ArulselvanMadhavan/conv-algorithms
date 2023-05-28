@@ -277,6 +277,7 @@ int main(int argc, char *argv[]) {
     break;
   case ConvAlg::kn2row:
     kn2row_as(inputs, kernels, outputs, in_shape, k_shape, o_shape);
+    break;
   };
 
   // Torch ref
